@@ -3,6 +3,17 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 
+@st.cache_data(ttl=3600)
+def load_price_data(symbol: str, period: str) -> pd.DataFrame:
+    df = yf.download(symbol, period=period, auto_adjust=False, progress=False)
+
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
+    return df.dropna()
 st.set_page_config(page_title="Overview", layout="wide")
 
 st.title("Overview")

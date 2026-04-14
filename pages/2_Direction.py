@@ -5,6 +5,23 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 
+@st.cache_data(ttl=3600)
+def load_data(symbol: str) -> pd.DataFrame:
+    df = yf.download(symbol, period="2y", auto_adjust=False, progress=False)
+
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
+    return df.dropna()
+
+df = load_data(ticker)
+if df.empty:
+    st.error("No data returned for this ticker.")
+    st.stop()
+
 st.title("Direction Prediction")
 st.write("Predict whether the selected metals stock may move up or down next day.")
 
