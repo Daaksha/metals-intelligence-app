@@ -3,6 +3,8 @@ from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
+import yfinance as yf
+from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
@@ -29,16 +31,145 @@ st.set_page_config(
 )
 set_app_style()
 
+# ── Fix selectbox visibility
+st.markdown("""
+<style>
+.stSelectbox [data-baseweb="select"] > div {
+    background: #ffffff !important;
+    border: 1.5px solid rgba(163,139,92,0.35) !important;
+    border-radius: 10px !important;
+    color: #1a1a1a !important;
+}
+.stSelectbox [data-baseweb="select"] span,
+.stSelectbox [data-baseweb="select"] div {
+    color: #1a1a1a !important;
+    font-weight: 500 !important;
+}
+[data-baseweb="popover"] {
+    background: #ffffff !important;
+}
+[data-baseweb="popover"] li {
+    color: #1a1a1a !important;
+    background: #ffffff !important;
+}
+[data-baseweb="popover"] li:hover {
+    background: rgba(163,139,92,0.12) !important;
+    color: #1a1a1a !important;
+}
+[data-baseweb="menu"] {
+    background: #ffffff !important;
+    border: 1px solid rgba(163,139,92,0.25) !important;
+    border-radius: 10px !important;
+}
+[role="option"] {
+    color: #1a1a1a !important;
+    background: #ffffff !important;
+}
+[role="option"]:hover {
+    background: rgba(163,139,92,0.10) !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 ticker_options = get_ticker_options()
 ticker_labels  = list(ticker_options.keys())
 
 nav = st.radio(
     "Navigation",
     ["Dashboard", "Overview", "Direction", "Risk",
-     "Fraud", "Recommendation", "Stop-Loss", "Macro"],
+     "Fraud", "Recommendation", "Stop-Loss", "Macro & News"],
     horizontal=True,
     label_visibility="collapsed",
 )
+
+# ── Ticker metadata
+TICKER_META = {
+    "FCX":  {"name": "Freeport-McMoRan",  "metal": "Copper Mining",   "desc": "World's largest publicly traded copper producer. Highly sensitive to global industrial demand and China economic cycles."},
+    "NEM":  {"name": "Newmont Corp",       "metal": "Gold Mining",     "desc": "Largest gold mining company globally. Performs well during inflation, dollar weakness, and geopolitical uncertainty."},
+    "AA":   {"name": "Alcoa Corp",         "metal": "Aluminum",        "desc": "Primary aluminum producer. Affected by energy costs (smelting), global manufacturing demand, and trade policy."},
+    "CLF":  {"name": "Cleveland-Cliffs",   "metal": "Steel",           "desc": "Major flat-rolled steel producer. Tied to US auto industry, construction activity, and domestic infrastructure spending."},
+    "X":    {"name": "U.S. Steel",         "metal": "Steel",           "desc": "Integrated steel producer. Sensitive to US manufacturing cycles, tariff policy, and construction sector health."},
+    "NUE":  {"name": "Nucor Corp",         "metal": "Steel",           "desc": "Largest US steel producer by volume. Uses electric arc furnace technology — more energy efficient and flexible than blast furnace peers."},
+    "SCCO": {"name": "Southern Copper",    "metal": "Copper",          "desc": "Low-cost copper and molybdenum producer in Mexico and Peru. Among the most profitable copper miners globally."},
+    "GOLD": {"name": "Barrick Gold",       "metal": "Gold Mining",     "desc": "Second largest gold miner globally. Key assets in Nevada (US) and Kibali (DRC). Tracks gold spot price closely."},
+}
+
+
+@st.cache_data(ttl=300)
+def get_quick_prices():
+    results = {}
+    for ticker in TICKER_META.keys():
+        try:
+            df = yf.download(ticker, period="2d", auto_adjust=False, progress=False)
+            if df is None or df.empty:
+                continue
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            close = df["Close"].squeeze()
+            latest = float(close.iloc[-1])
+            prev   = float(close.iloc[-2]) if len(close) > 1 else latest
+            chg    = (latest - prev) / prev * 100
+            results[ticker] = {"price": latest, "change": chg}
+        except Exception:
+            pass
+    return results
+
+
+@st.cache_data(ttl=1800)
+def get_ticker_news(symbol, max_items=6):
+    try:
+        t    = yf.Ticker(symbol)
+        news = t.news
+        if news:
+            return news[:max_items]
+        return []
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=1800)
+def get_metals_news():
+    all_news = []
+    for ticker in ["FCX", "NEM", "AA", "GLD", "COPX", "SLX"]:
+        try:
+            t    = yf.Ticker(ticker)
+            news = t.news
+            if news:
+                all_news.extend(news[:3])
+        except Exception:
+            pass
+    seen   = set()
+    unique = []
+    for item in all_news:
+        title = item.get("title", "")
+        if title not in seen:
+            seen.add(title)
+            unique.append(item)
+    return unique[:12]
+
+
+def render_news_card(item):
+    title     = item.get("title", "No title")
+    publisher = item.get("publisher", "Unknown")
+    link      = item.get("link", "#")
+    ts        = item.get("providerPublishTime", 0)
+    date_str  = datetime.fromtimestamp(ts).strftime("%b %d, %Y") if ts else ""
+    st.markdown(f"""
+    <div style="background:#ffffff;border:1px solid rgba(163,139,92,0.2);
+                border-radius:12px;padding:16px 18px;margin:0.5rem 0;
+                box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+        <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;
+                    letter-spacing:0.08em;color:#a38b5c;margin-bottom:0.4rem;">
+            {publisher} &nbsp;·&nbsp; {date_str}
+        </div>
+        <a href="{link}" target="_blank"
+           style="font-size:0.94rem;font-weight:600;color:#1a1a1a;
+                  text-decoration:none;line-height:1.5;">
+            {title}
+        </a>
+    </div>
+    """, unsafe_allow_html=True)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DASHBOARD
@@ -46,21 +177,64 @@ nav = st.radio(
 if nav == "Dashboard":
 
     render_hero(
-        "Metals Intelligence Platform  ◈  Spring 2026",
+        "Metals Intelligence Platform",
         "Metals Intelligence Dashboard",
         "An institutional-grade decision-support system for metals sector equities — "
         "integrating live market data, machine learning prediction models, financial "
         "integrity screening, and macroeconomic analysis into a single unified platform.",
     )
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Stocks Covered",    "8 Tickers",    "Metals Universe")
-    c2.metric("Analytics Modules", "7 Active",     "End-to-End Coverage")
-    c3.metric("Data Layer",        "Live APIs",    "Real-Time Market Data")
-    c4.metric("ML Models",         "4 Algorithms", "Predictive Intelligence")
+    divider()
+
+    # ── Live Ticker Grid
+    render_section(
+        "Metals Universe — 8 Covered Equities",
+        "Live prices and key descriptions for every stock covered by this platform. "
+        "Prices refresh every 5 minutes. Click any tab above to analyse a specific stock in depth.",
+    )
+
+    with st.spinner("Loading live prices..."):
+        prices = get_quick_prices()
+
+    rows = [list(TICKER_META.keys())[i:i+4] for i in range(0, 8, 4)]
+    for row in rows:
+        cols = st.columns(4)
+        for col, ticker in zip(cols, row):
+            meta   = TICKER_META[ticker]
+            p_data = prices.get(ticker, {})
+            price  = p_data.get("price", None)
+            change = p_data.get("change", None)
+            price_str  = f"${price:,.2f}" if price else "—"
+            change_str = f"{change:+.2f}%" if change is not None else ""
+            chg_color  = "#27ae60" if (change or 0) >= 0 else "#e74c3c"
+            with col:
+                st.markdown(f"""
+                <div style="background:#ffffff;border:1px solid rgba(163,139,92,0.22);
+                            border-radius:16px;padding:18px 20px;
+                            box-shadow:0 2px 10px rgba(0,0,0,0.04);margin-bottom:1rem;">
+                    <div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;
+                                letter-spacing:0.1em;color:#a38b5c;margin-bottom:0.3rem;">
+                        {ticker} — {meta['metal']}
+                    </div>
+                    <div style="font-size:1.05rem;font-weight:700;color:#1a1a1a;
+                                margin-bottom:0.25rem;">{meta['name']}</div>
+                    <div style="display:flex;align-items:baseline;gap:0.5rem;margin-bottom:0.6rem;">
+                        <span style="font-size:1.5rem;font-weight:700;color:#1a1a1a;
+                                     font-family:'DM Serif Display',serif;">{price_str}</span>
+                        <span style="font-size:0.85rem;font-weight:600;color:{chg_color};">
+                            {change_str}
+                        </span>
+                    </div>
+                    <div style="font-size:0.8rem;color:#6b6560;line-height:1.55;">
+                        {meta['desc']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
     divider()
 
+    # ── Module Cards
     render_section(
         "Platform Modules",
         "Navigate using the tab bar above. Each module is independently powered "
@@ -71,7 +245,7 @@ if nav == "Dashboard":
     with r1c1:
         st.markdown("""
         <div class="nav-card">
-            <div class="nav-card-tag">Module 01 — Market Data</div>
+            <div class="nav-card-tag">Market Analytics</div>
             <div class="nav-card-title">Overview</div>
             <div class="nav-card-text">Live candlestick price chart with volume bars,
             Bollinger Bands, moving averages (MA10/20/50), RSI momentum indicator,
@@ -80,7 +254,7 @@ if nav == "Dashboard":
     with r1c2:
         st.markdown("""
         <div class="nav-card">
-            <div class="nav-card-tag">Module 02 — Machine Learning</div>
+            <div class="nav-card-tag">Predictive Intelligence</div>
             <div class="nav-card-title">Direction Prediction</div>
             <div class="nav-card-text">Short-horizon price direction signal (Up / Down)
             powered by a Random Forest classifier trained on 2 years of technical features.
@@ -89,7 +263,7 @@ if nav == "Dashboard":
     with r1c3:
         st.markdown("""
         <div class="nav-card">
-            <div class="nav-card-tag">Module 03 — Risk Management</div>
+            <div class="nav-card-tag">Risk Analytics</div>
             <div class="nav-card-title">Risk & Volatility</div>
             <div class="nav-card-text">Annualised volatility forecasting, rolling drawdown
             analysis, Value-at-Risk (VaR) at 95% confidence, and risk-level classification
@@ -102,7 +276,7 @@ if nav == "Dashboard":
     with r2c1:
         st.markdown("""
         <div class="nav-card">
-            <div class="nav-card-tag">Module 04 — Integrity</div>
+            <div class="nav-card-tag">Financial Integrity</div>
             <div class="nav-card-title">Fraud Detection</div>
             <div class="nav-card-text">Beneish-style financial statement quality screening
             using gross margin, asset quality, leverage, and profitability ratios to flag
@@ -111,7 +285,7 @@ if nav == "Dashboard":
     with r2c2:
         st.markdown("""
         <div class="nav-card">
-            <div class="nav-card-tag">Module 05 — Decision Engine</div>
+            <div class="nav-card-tag">Investment Intelligence</div>
             <div class="nav-card-title">Recommendation</div>
             <div class="nav-card-text">Hybrid MetalScore (0–100) aggregating direction
             signals, momentum, volatility penalty, and accounting quality into a final
@@ -120,7 +294,7 @@ if nav == "Dashboard":
     with r2c3:
         st.markdown("""
         <div class="nav-card">
-            <div class="nav-card-tag">Module 06 — Risk Control</div>
+            <div class="nav-card-tag">Position Risk Management</div>
             <div class="nav-card-title">Stop-Loss Assistant</div>
             <div class="nav-card-text">Personalised stop-loss price and position sizing
             calculator calibrated to the user's risk tolerance, investment amount,
@@ -129,12 +303,31 @@ if nav == "Dashboard":
     with r2c4:
         st.markdown("""
         <div class="nav-card">
-            <div class="nav-card-tag">Module 07 — Macro Context</div>
-            <div class="nav-card-title">Macro Dashboard</div>
+            <div class="nav-card-tag">Global Markets & Economics</div>
+            <div class="nav-card-title">Macro & News</div>
             <div class="nav-card-text">Gold, silver, copper, and crude oil price trends
-            alongside treasury yields, the VIX fear index, and the US Dollar Index —
-            the macro backdrop driving metals markets globally.</div>
+            alongside treasury yields, VIX, US Dollar Index, live metals news,
+            and macro/micro economic analysis driving metals markets.</div>
         </div>""", unsafe_allow_html=True)
+
+    divider()
+
+    # ── Latest News on Dashboard
+    render_section(
+        "Latest Metals Market News",
+        "Live headlines from across the metals sector. Updated every 30 minutes.",
+    )
+
+    with st.spinner("Loading latest news..."):
+        dash_news = get_metals_news()
+
+    if dash_news:
+        nc1, nc2 = st.columns(2)
+        for i, item in enumerate(dash_news[:8]):
+            with (nc1 if i % 2 == 0 else nc2):
+                render_news_card(item)
+    else:
+        st.info("News feed temporarily unavailable.")
 
     divider()
 
@@ -160,14 +353,11 @@ if nav == "Dashboard":
             <div style="font-size:0.88rem;color:#3a3530;line-height:1.75;">
                 Metals stocks are among the most volatile and macro-sensitive equities
                 in any market. They respond to commodity price cycles, global industrial
-                demand, geopolitical risk, and monetary policy — making them both
-                high-opportunity and high-risk investments that require systematic,
-                data-driven analysis rather than intuition alone.<br><br>
+                demand, geopolitical risk, and monetary policy.<br><br>
                 Gold miners hedge against inflation and dollar weakness. Copper producers
                 track global industrial growth. Steel companies reflect domestic
-                construction and manufacturing cycles. This diversity makes metals
-                a uniquely rich sector for multi-factor financial analytics.<br><br>
-                This platform gives retail investors access to the same analytical
+                construction and manufacturing cycles.<br><br>
+                This platform gives investors access to the same analytical
                 framework used by professional metals-sector analysts.
             </div>
         </div>""", unsafe_allow_html=True)
@@ -179,7 +369,7 @@ if nav == "Dashboard":
 elif nav == "Overview":
 
     render_hero(
-        "Module 01 — Market Data",
+        "Market Analytics",
         "Market Overview",
         "Live price action, volume analysis, and technical indicators for the selected "
         "metals stock. All charts update automatically with the latest available market data.",
@@ -215,6 +405,13 @@ elif nav == "Overview":
     macd_sig     = float(df["MACD_Signal"].dropna().iloc[-1])
     rsi_label    = "Overbought" if latest_rsi > 70 else "Oversold" if latest_rsi < 30 else "Neutral"
     macd_label   = "Bullish" if latest_macd > macd_sig else "Bearish"
+    meta         = TICKER_META.get(ticker, {})
+
+    if meta:
+        render_info(
+            f"<strong>{meta.get('name', ticker)} ({ticker})</strong> — {meta.get('metal', '')}. "
+            f"{meta.get('desc', '')}"
+        )
 
     k1, k2, k3, k4, k5, k6 = st.columns(6)
     k1.metric("Last Price",     f"${latest:,.2f}",      f"{chg_pct:+.2f}%")
@@ -392,6 +589,23 @@ elif nav == "Overview":
 
     divider()
 
+    # ── Stock-specific news
+    render_section(
+        f"Latest News — {ticker}",
+        f"Recent headlines directly related to {ticker} and the {meta.get('metal', 'metals')} sector.",
+    )
+    with st.spinner("Loading news..."):
+        stock_news = get_ticker_news(ticker, max_items=6)
+    if stock_news:
+        nc1, nc2 = st.columns(2)
+        for i, item in enumerate(stock_news):
+            with (nc1 if i % 2 == 0 else nc2):
+                render_news_card(item)
+    else:
+        st.info("No recent news found for this ticker.")
+
+    divider()
+
     render_section(
         "Recent Trading Sessions",
         "Last 15 sessions showing OHLCV data alongside key indicators. Most recent first.",
@@ -431,7 +645,7 @@ elif nav == "Overview":
 elif nav == "Direction":
 
     render_hero(
-        "Module 02 — Machine Learning",
+        "Predictive Intelligence",
         "Direction Prediction",
         "A machine learning model trained on 2 years of technical indicators to predict "
         "whether the selected metals stock is likely to move Up or Down over the next "
@@ -450,6 +664,9 @@ elif nav == "Direction":
         )
 
     ticker = get_ticker_symbol(selected_label)
+    meta   = TICKER_META.get(ticker, {})
+    if meta:
+        render_info(f"<strong>{meta.get('name', ticker)} ({ticker})</strong> — {meta.get('desc', '')}")
 
     with st.spinner(f"Loading 2 years of data and training model for {ticker}..."):
         df_raw = load_price_data(ticker, "2y")
@@ -682,7 +899,7 @@ elif nav == "Direction":
                                       target_names=["DOWN (0)", "UP (1)"]))
 
     render_info(
-        "<strong>Disclaimer:</strong> This model is for educational purposes only. "
+        "<strong>Disclaimer:</strong> This model is for analytical purposes only. "
         "No model can consistently predict short-term market movements. "
         "Always combine signals with fundamental analysis and your own judgment."
     )
@@ -694,7 +911,7 @@ elif nav == "Direction":
 elif nav == "Risk":
 
     render_hero(
-        "Module 03 — Risk Management",
+        "Risk Analytics",
         "Risk & Volatility",
         "Quantitative risk analysis for the selected metals stock — covering annualised "
         "volatility, rolling drawdown, Value-at-Risk (VaR), and risk classification. "
@@ -710,8 +927,11 @@ elif nav == "Risk":
         )
 
     ticker = get_ticker_symbol(selected_label)
-    df_raw = load_price_data(ticker, period)
+    meta   = TICKER_META.get(ticker, {})
+    if meta:
+        render_info(f"<strong>{meta.get('name', ticker)} ({ticker})</strong> — {meta.get('desc', '')}")
 
+    df_raw = load_price_data(ticker, period)
     if df_raw.empty:
         st.error("No data returned. Try another ticker.")
         st.stop()
@@ -913,21 +1133,23 @@ elif nav == "Risk":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FRAUD DETECTION
+# FRAUD
 # ══════════════════════════════════════════════════════════════════════════════
 elif nav == "Fraud":
 
     render_hero(
-        "Module 04 — Financial Integrity",
+        "Financial Integrity Screening",
         "Fraud & Manipulation Detection",
         "A Beneish-style financial statement quality screening tool that analyses key "
         "accounting ratios to detect potential earnings manipulation or financial statement "
-        "irregularities in metals sector companies. Based on the widely-used Beneish M-Score "
-        "framework adapted for metals industry characteristics.",
+        "irregularities in metals sector companies.",
     )
 
     selected_label = st.selectbox("Select a Metals Stock", ticker_labels, key="fraud_ticker")
     ticker = get_ticker_symbol(selected_label)
+    meta   = TICKER_META.get(ticker, {})
+    if meta:
+        render_info(f"<strong>{meta.get('name', ticker)} ({ticker})</strong> — {meta.get('desc', '')}")
 
     with st.spinner(f"Fetching financial statement data for {ticker}..."):
         scores = get_beneish_scores(ticker)
@@ -944,51 +1166,41 @@ elif nav == "Fraud":
             f"<strong>{ticker} — {overall}.</strong> "
             f"{flags} accounting quality flags were triggered. "
             f"This suggests potential financial statement manipulation or significant "
-            f"accounting irregularities. Investors should conduct deeper due diligence "
-            f"before taking a position. High-risk flags include deteriorating gross margins, "
-            f"elevated leverage, poor cash flow quality, or rapid asset growth relative to revenue."
+            f"accounting irregularities. Investors should conduct deeper due diligence."
         )
     elif "Moderate" in overall:
         render_alert(
             f"<strong>{ticker} — {overall}.</strong> "
             f"{flags} accounting quality flags were triggered. "
-            f"Some indicators suggest caution. The financial statements show mixed signals — "
-            f"not clean enough to dismiss concerns, but not severe enough to indicate outright manipulation. "
-            f"Monitor closely, especially around earnings announcements."
+            f"Some indicators suggest caution. Monitor closely around earnings announcements."
         )
     else:
         render_success(
             f"<strong>{ticker} — {overall}.</strong> "
             f"{flags} accounting quality flags were triggered. "
-            f"Financial statement quality appears acceptable. Key ratios are within normal ranges, "
-            f"suggesting the reported financials are likely reliable for investment analysis purposes."
+            f"Financial statement quality appears acceptable."
         )
 
     divider()
 
     render_section(
         "Financial Ratio Analysis — Beneish-Style Screening",
-        "The Beneish M-Score model was developed by Professor Messod Beneish to detect "
-        "earnings manipulation using financial statement ratios. Each ratio below measures "
-        "a different dimension of financial statement quality. Warning flags indicate ratios "
-        "outside normal ranges that may suggest aggressive accounting or manipulation.",
+        "Each ratio measures a different dimension of financial statement quality. "
+        "Warning flags indicate ratios outside normal ranges that may suggest aggressive accounting.",
     )
 
     ratio_keys = [
         "Gross Margin (%)", "Asset Quality Index", "Leverage Ratio",
         "Net Profit Margin (%)", "Current Ratio", "FCF Margin (%)",
     ]
-    flag_keys = [
-        "GM Flag", "AQI Flag", "LEV Flag",
-        "NPM Flag", "CR Flag", "FCF Flag",
-    ]
+    flag_keys = ["GM Flag", "AQI Flag", "LEV Flag", "NPM Flag", "CR Flag", "FCF Flag"]
     descriptions = {
-        "Gross Margin (%)":      "Revenue minus cost of goods sold as % of revenue. Low margins (<20%) may signal pricing pressure or cost inflation.",
-        "Asset Quality Index":   "Non-current assets as proportion of total assets. High values (>0.75) suggest increasing intangible or hard-to-value assets.",
-        "Leverage Ratio":        "Total debt as proportion of total assets. High leverage (>0.60) increases financial risk and default probability.",
-        "Net Profit Margin (%)": "Net income as % of revenue. Very low margins (<3%) may signal profitability problems or aggressive expense management.",
-        "Current Ratio":         "Current assets divided by current liabilities. Values below 1.0 indicate potential short-term liquidity risk.",
-        "FCF Margin (%)":        "Free cash flow as % of revenue. Negative FCF margin signals cash is being consumed faster than generated.",
+        "Gross Margin (%)":      "Revenue minus COGS as % of revenue. Low margins (<20%) may signal pricing pressure.",
+        "Asset Quality Index":   "Non-current assets as proportion of total assets. High values (>0.75) suggest hard-to-value assets.",
+        "Leverage Ratio":        "Total debt as proportion of total assets. High leverage (>0.60) increases default risk.",
+        "Net Profit Margin (%)": "Net income as % of revenue. Very low margins (<3%) may signal profitability problems.",
+        "Current Ratio":         "Current assets / current liabilities. Below 1.0 = potential short-term liquidity risk.",
+        "FCF Margin (%)":        "Free cash flow as % of revenue. Negative FCF signals cash consumed faster than generated.",
     }
 
     col1, col2 = st.columns(2)
@@ -1006,7 +1218,8 @@ elif nav == "Fraud":
             st.markdown(f"""
             <div style="background:{color};border:1px solid {border};
                         border-radius:12px;padding:16px 18px;margin:0.5rem 0;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <div style="display:flex;justify-content:space-between;
+                            align-items:center;margin-bottom:6px;">
                     <span style="font-weight:700;font-size:0.9rem;color:#1a1a1a;">{ratio}</span>
                     <span style="font-weight:700;font-size:0.85rem;color:{label};">{icon} {flag_val}</span>
                 </div>
@@ -1018,30 +1231,14 @@ elif nav == "Fraud":
 
     divider()
 
-    render_section(
-        "Risk Score Breakdown",
-        "Visual summary of which ratios triggered warning flags. "
-        "Each bar represents a different financial ratio — red indicates a warning, "
-        "green indicates normal. The overall risk level is determined by the proportion "
-        "of flags triggered across all six ratios.",
-    )
-
-    ratio_values = []
-    ratio_colors = []
-    ratio_labels = []
-    for ratio, flag in zip(ratio_keys, flag_keys):
-        val  = scores.get(ratio, 0)
-        flg  = scores.get(flag, "Normal")
-        try:
-            ratio_values.append(float(str(val).replace("%", "")))
-        except Exception:
-            ratio_values.append(0)
-        ratio_colors.append("#e74c3c" if flg == "Warning" else "#27ae60")
-        ratio_labels.append(ratio)
-
+    render_section("Risk Score Visual")
+    ratio_colors_fraud = [
+        "#e74c3c" if scores.get(f, "Normal") == "Warning" else "#27ae60"
+        for f in flag_keys
+    ]
     fig_fraud = go.Figure(go.Bar(
-        x=ratio_labels, y=[1] * len(ratio_labels),
-        marker_color=ratio_colors, marker_opacity=0.85,
+        x=ratio_keys, y=[1] * len(ratio_keys),
+        marker_color=ratio_colors_fraud, marker_opacity=0.85,
         text=[scores.get(r, "N/A") for r in ratio_keys],
         textposition="inside",
         textfont=dict(size=11, color="white", family="DM Sans"),
@@ -1054,16 +1251,13 @@ elif nav == "Fraud":
                    gridcolor="rgba(163,139,92,0.10)"),
         yaxis=dict(visible=False),
         showlegend=False,
-        hoverlabel=dict(bgcolor="#ffffff", font=dict(family="DM Sans", size=12)),
     )
     st.plotly_chart(fig_fraud, use_container_width=True)
 
     render_info(
-        "<strong>About the Beneish M-Score:</strong> Developed by Professor Messod Beneish at Indiana University, "
+        "<strong>About the Beneish M-Score:</strong> Developed by Professor Messod Beneish, "
         "the M-Score uses financial statement ratios to identify companies that may have manipulated earnings. "
-        "This implementation uses a simplified version adapted for publicly available data from Yahoo Finance. "
-        "It should be used as a screening tool alongside fundamental analysis, not as a definitive verdict. "
-        "Metals companies often have naturally high leverage and asset-intensity, so thresholds are calibrated accordingly."
+        "This is a screening tool — use it alongside fundamental analysis, not as a definitive verdict."
     )
 
 
@@ -1073,15 +1267,18 @@ elif nav == "Fraud":
 elif nav == "Recommendation":
 
     render_hero(
-        "Module 05 — Decision Engine",
+        "Investment Intelligence",
         "Recommendation Engine",
         "A hybrid MetalScore (0–100) that aggregates signals from price direction, "
-        "momentum, volatility risk, valuation, and financial statement quality into a "
-        "single Buy / Hold / Avoid recommendation with full signal attribution.",
+        "momentum, volatility risk, and financial statement quality into a single "
+        "Buy / Hold / Avoid recommendation with full signal attribution.",
     )
 
     selected_label = st.selectbox("Select a Metals Stock", ticker_labels, key="rec_ticker")
     ticker = get_ticker_symbol(selected_label)
+    meta   = TICKER_META.get(ticker, {})
+    if meta:
+        render_info(f"<strong>{meta.get('name', ticker)} ({ticker})</strong> — {meta.get('desc', '')}")
 
     with st.spinner(f"Computing MetalScore for {ticker}..."):
         df_raw = load_price_data(ticker, "1y")
@@ -1091,8 +1288,6 @@ elif nav == "Recommendation":
         st.stop()
 
     df = add_technical_indicators(df_raw)
-
-    close       = df["Close"].squeeze()
     returns     = df["Return_1d"].dropna()
     latest_rsi  = float(df["RSI"].dropna().iloc[-1])
     latest_macd = float(df["MACD"].dropna().iloc[-1])
@@ -1101,11 +1296,8 @@ elif nav == "Recommendation":
     momentum_20 = float(df["Momentum_20"].dropna().iloc[-1])
     bb_pct      = float(df["BB_Pct"].dropna().iloc[-1])
     drawdown    = compute_drawdown(df)
-    max_dd      = float(drawdown.min())
     avg_ret     = float(returns.mean())
 
-    # ── Scoring components (each 0–100)
-    # 1. RSI score — reward neutral/mild, penalise extremes
     if latest_rsi < 30:
         rsi_score = 75
     elif latest_rsi > 70:
@@ -1113,10 +1305,8 @@ elif nav == "Recommendation":
     else:
         rsi_score = 50 + (50 - latest_rsi) * 0.5
 
-    # 2. MACD score
     macd_score = 70 if latest_macd > macd_sig else 30
 
-    # 3. Momentum score
     if momentum_20 > 0.10:
         mom_score = 80
     elif momentum_20 > 0:
@@ -1126,7 +1316,6 @@ elif nav == "Recommendation":
     else:
         mom_score = 20
 
-    # 4. Volatility penalty
     if vol_20 < 0.25:
         vol_score = 80
     elif vol_20 < 0.45:
@@ -1134,27 +1323,16 @@ elif nav == "Recommendation":
     else:
         vol_score = 25
 
-    # 5. Bollinger position
-    if 0.2 <= bb_pct <= 0.8:
-        bb_score = 65
-    elif bb_pct < 0.2:
-        bb_score = 75
-    else:
-        bb_score = 35
-
-    # 6. Return quality
+    bb_score  = 75 if bb_pct < 0.2 else 35 if bb_pct > 0.8 else 65
     ret_score = min(max(50 + avg_ret * 10000, 10), 90)
 
-    # Weighted MetalScore
-    metal_score = (
+    metal_score = round(min(max(
         rsi_score  * 0.20 +
         macd_score * 0.20 +
         mom_score  * 0.25 +
         vol_score  * 0.15 +
         bb_score   * 0.10 +
-        ret_score  * 0.10
-    )
-    metal_score = round(min(max(metal_score, 0), 100), 1)
+        ret_score  * 0.10, 0), 100), 1)
 
     if metal_score >= 65:
         recommendation = "BUY"
@@ -1170,8 +1348,8 @@ elif nav == "Recommendation":
         rec_fn         = render_danger
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Ticker",        ticker)
-    k2.metric("MetalScore",    f"{metal_score} / 100")
+    k1.metric("Ticker",         ticker)
+    k2.metric("MetalScore",     f"{metal_score} / 100")
     k3.metric("Recommendation", recommendation)
     k4.metric("Momentum (20d)", f"{momentum_20*100:+.1f}%")
 
@@ -1181,18 +1359,12 @@ elif nav == "Recommendation":
         f"{'overbought, caution advised' if latest_rsi > 70 else 'oversold, potential opportunity' if latest_rsi < 30 else 'neutral'}. "
         f"MACD is <strong>{'bullish' if latest_macd > macd_sig else 'bearish'}</strong>. "
         f"20-day momentum: <strong>{momentum_20*100:+.1f}%</strong>. "
-        f"20-day annualised volatility: <strong>{vol_20*100:.1f}%</strong>. "
-        f"Bollinger Band position: <strong>{bb_pct*100:.0f}%</strong> of the band width."
+        f"20-day annualised volatility: <strong>{vol_20*100:.1f}%</strong>."
     )
 
     divider()
 
-    render_section(
-        "MetalScore Gauge",
-        "The MetalScore combines six financial signals into a single 0–100 score. "
-        "Scores above 65 generate a Buy signal, 45–65 generate Hold, below 45 generate Avoid.",
-    )
-
+    render_section("MetalScore Gauge & Signal Breakdown")
     col_g1, col_g2 = st.columns(2)
 
     with col_g1:
@@ -1230,13 +1402,11 @@ elif nav == "Recommendation":
         signal_weights = [0.20, 0.20, 0.25, 0.15, 0.10, 0.10]
         bar_cols = ["#27ae60" if s >= 60 else "#f9a825" if s >= 40 else "#e74c3c"
                     for s in signal_scores]
-
         fig_signals = go.Figure(go.Bar(
             x=signal_scores, y=signal_names, orientation="h",
             marker_color=bar_cols, marker_opacity=0.85,
             text=[f"{s:.0f} (wt: {w:.0%})" for s, w in zip(signal_scores, signal_weights)],
-            textposition="outside",
-            textfont=dict(size=10, color="#6b6560"),
+            textposition="outside", textfont=dict(size=10, color="#6b6560"),
         ))
         fig_signals.add_vline(x=50, line=dict(color="#a38b5c", width=1.5, dash="dash"))
         fig_signals.update_layout(
@@ -1257,12 +1427,10 @@ elif nav == "Recommendation":
 
     render_section(
         "Sector Comparison — Relative Performance",
-        "All metals stocks in the universe rebased to 100 at the start of the period. "
-        "Lines above 100 indicate positive performance relative to the start date. "
-        "This helps identify the strongest and weakest performers in the metals sector.",
+        "All metals stocks rebased to 100. Lines above 100 = positive performance since period start.",
     )
 
-    with st.spinner("Loading sector comparison data..."):
+    with st.spinner("Loading sector comparison..."):
         sector_df = load_sector_normalised("6mo")
 
     if not sector_df.empty:
@@ -1274,8 +1442,7 @@ elif nav == "Recommendation":
             op = 1.0 if col == ticker else 0.55
             fig_sector.add_trace(go.Scatter(
                 x=sector_df.index, y=sector_df[col],
-                line=dict(color=colors_sector[i % len(colors_sector)],
-                          width=lw),
+                line=dict(color=colors_sector[i % len(colors_sector)], width=lw),
                 opacity=op, name=col,
             ))
         fig_sector.add_hline(y=100, line=dict(color="#6b6560", width=1, dash="dot"))
@@ -1297,24 +1464,20 @@ elif nav == "Recommendation":
                             font=dict(family="DM Sans", size=12, color="#1a1a1a")),
         )
         st.plotly_chart(fig_sector, use_container_width=True)
-    else:
-        st.warning("Could not load sector comparison data.")
 
     render_info(
         "<strong>Disclaimer:</strong> The MetalScore and recommendation are generated by a "
-        "quantitative model using technical indicators only. They do not constitute financial advice. "
-        "Always conduct your own research and consider fundamental factors before making "
-        "any investment decisions."
+        "quantitative model using technical indicators only. They do not constitute financial advice."
     )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STOP-LOSS ASSISTANT
+# STOP-LOSS
 # ══════════════════════════════════════════════════════════════════════════════
 elif nav == "Stop-Loss":
 
     render_hero(
-        "Module 06 — Risk Control",
+        "Position Risk Management",
         "Stop-Loss Assistant",
         "A personalised stop-loss price and position sizing calculator that calibrates "
         "exit levels based on your risk tolerance, investment amount, and the stock's "
@@ -1326,53 +1489,43 @@ elif nav == "Stop-Loss":
         selected_label = st.selectbox("Select a Metals Stock", ticker_labels, key="sl_ticker")
     with col_sel2:
         risk_profile = st.selectbox(
-            "Risk Profile",
-            ["Conservative", "Moderate", "Aggressive"],
+            "Risk Profile", ["Conservative", "Moderate", "Aggressive"],
             index=1, key="sl_risk",
         )
 
     ticker = get_ticker_symbol(selected_label)
-    df_raw = load_price_data(ticker, "3mo")
+    meta   = TICKER_META.get(ticker, {})
+    if meta:
+        render_info(f"<strong>{meta.get('name', ticker)} ({ticker})</strong> — {meta.get('desc', '')}")
 
+    df_raw = load_price_data(ticker, "3mo")
     if df_raw.empty:
         st.error("No data returned. Try another ticker.")
         st.stop()
 
-    df = add_technical_indicators(df_raw)
-
+    df           = add_technical_indicators(df_raw)
     latest_price = float(df["Close"].squeeze().iloc[-1])
     atr          = float(df["ATR"].dropna().iloc[-1])
     vol_20       = float(df["Volatility_20d"].dropna().iloc[-1])
 
     divider()
 
-    render_section(
-        "Position Parameters",
-        "Enter your investment details below. The calculator will compute your recommended "
-        "stop-loss price, maximum acceptable loss in dollars, and suggested position size.",
-    )
+    render_section("Position Parameters")
 
     col_i1, col_i2, col_i3 = st.columns(3)
     with col_i1:
         investment = st.number_input(
-            "Investment Amount ($)",
-            min_value=100, max_value=1000000,
+            "Investment Amount ($)", min_value=100, max_value=1000000,
             value=10000, step=500,
         )
     with col_i2:
-        max_loss_pct = st.slider(
-            "Maximum Acceptable Loss (%)",
-            min_value=1, max_value=30, value=10,
-        )
+        max_loss_pct = st.slider("Maximum Acceptable Loss (%)", min_value=1, max_value=30, value=10)
     with col_i3:
         st.metric("Current Price", f"${latest_price:,.2f}")
         st.metric("ATR (14-Day)",  f"${atr:,.2f}")
 
-    # ATR multiplier by risk profile
-    atr_mult = {"Conservative": 1.5, "Moderate": 2.0, "Aggressive": 3.0}[risk_profile]
-    pct_mult = {"Conservative": 0.5, "Moderate": 1.0, "Aggressive": 1.5}[risk_profile]
-
-    # Stop-loss calculations
+    atr_mult     = {"Conservative": 1.5, "Moderate": 2.0, "Aggressive": 3.0}[risk_profile]
+    pct_mult     = {"Conservative": 0.5, "Moderate": 1.0, "Aggressive": 1.5}[risk_profile]
     stop_atr     = latest_price - (atr * atr_mult)
     stop_pct     = latest_price * (1 - (max_loss_pct / 100) * pct_mult)
     stop_final   = max(stop_atr, stop_pct)
@@ -1387,8 +1540,8 @@ elif nav == "Stop-Loss":
 
     render_section(
         "Your Stop-Loss Recommendation",
-        f"Based on {risk_profile} risk profile, current ATR of ${atr:.2f}, and "
-        f"your maximum acceptable loss of {max_loss_pct}% (${max_loss_usd:,.0f}).",
+        f"Based on {risk_profile} risk profile, ATR of ${atr:.2f}, and "
+        f"maximum acceptable loss of {max_loss_pct}% (${max_loss_usd:,.0f}).",
     )
 
     k1, k2, k3, k4, k5 = st.columns(5)
@@ -1401,30 +1554,22 @@ elif nav == "Stop-Loss":
     if stop_dist_pct < 3:
         render_alert(
             f"<strong>Stop-loss is very tight ({stop_dist_pct:.1f}% below entry).</strong> "
-            f"With {ticker}'s current ATR of ${atr:.2f}, normal daily price fluctuations "
-            f"could trigger this stop prematurely. Consider widening your stop or reducing position size."
+            f"Normal daily price fluctuations for {ticker} (ATR: ${atr:.2f}) could trigger "
+            f"this stop prematurely. Consider widening your stop or reducing position size."
         )
     else:
         render_info(
             f"<strong>Stop-loss set at ${stop_final:,.2f} ({stop_dist_pct:.1f}% below entry).</strong> "
-            f"This level is based on {atr_mult}x the 14-day Average True Range (ATR) of ${atr:.2f}, "
-            f"giving the position room to breathe through normal volatility while limiting downside. "
-            f"The 2:1 risk-reward take-profit target is ${take_profit:,.2f}. "
+            f"Based on {atr_mult}x the 14-day ATR of ${atr:.2f}. "
+            f"Take-profit target: ${take_profit:,.2f}. "
             f"Suggested position: <strong>{shares} shares</strong> at ${position_val:,.0f} total."
         )
 
     divider()
 
-    render_section(
-        "Price Levels Chart",
-        "Visual representation of your entry price, stop-loss level, and take-profit target "
-        "overlaid on the recent price history. The shaded region shows the risk zone between "
-        "entry and stop-loss.",
-    )
-
+    render_section("Price Levels Chart")
     price_series = df["Close"].squeeze()
     fig_sl = go.Figure()
-
     fig_sl.add_trace(go.Scatter(
         x=price_series.index, y=price_series,
         line=dict(color="#a38b5c", width=2), name="Price",
@@ -1436,23 +1581,22 @@ elif nav == "Stop-Loss":
                      annotation_font=dict(size=11, color="#2471a3"))
     fig_sl.add_hline(y=stop_final,
                      line=dict(color="#e74c3c", width=2, dash="dash"),
-                     annotation_text=f"Stop-Loss: ${stop_final:,.2f}",
+                     annotation_text=f"Stop: ${stop_final:,.2f}",
                      annotation_position="right",
                      annotation_font=dict(size=11, color="#e74c3c"))
     fig_sl.add_hline(y=take_profit,
                      line=dict(color="#27ae60", width=2, dash="dash"),
-                     annotation_text=f"Take-Profit: ${take_profit:,.2f}",
+                     annotation_text=f"Target: ${take_profit:,.2f}",
                      annotation_position="right",
                      annotation_font=dict(size=11, color="#27ae60"))
     fig_sl.add_hrect(y0=stop_final, y1=latest_price,
                      fillcolor="rgba(231,76,60,0.07)", line_width=0)
     fig_sl.add_hrect(y0=latest_price, y1=take_profit,
                      fillcolor="rgba(39,174,96,0.07)", line_width=0)
-
     fig_sl.update_layout(
         paper_bgcolor="#faf6f0", plot_bgcolor="#faf6f0",
         font=dict(family="DM Sans", color="#1a1a1a", size=12),
-        height=460, margin=dict(l=10, r=120, t=20, b=10),
+        height=460, margin=dict(l=10, r=130, t=20, b=10),
         yaxis=dict(title="Price (USD)", gridcolor="rgba(163,139,92,0.10)",
                    tickfont=dict(size=11, color="#6b6560")),
         xaxis=dict(gridcolor="rgba(163,139,92,0.10)",
@@ -1475,12 +1619,12 @@ elif nav == "Stop-Loss":
         st.markdown('<div class="soft-panel">', unsafe_allow_html=True)
         st.markdown("<strong>Position Details</strong>", unsafe_allow_html=True)
         for label, value in {
-            "Risk Profile":           risk_profile,
-            "Entry Price":            f"${latest_price:,.2f}",
-            "Stop-Loss Price":        f"${stop_final:,.2f}",
-            "Stop Distance":          f"${stop_dist:,.2f} ({stop_dist_pct:.1f}%)",
-            "Take-Profit (2:1 R:R)":  f"${take_profit:,.2f}",
-            "ATR Multiplier Used":    f"{atr_mult}x",
+            "Risk Profile":          risk_profile,
+            "Entry Price":           f"${latest_price:,.2f}",
+            "Stop-Loss Price":       f"${stop_final:,.2f}",
+            "Stop Distance":         f"${stop_dist:,.2f} ({stop_dist_pct:.1f}%)",
+            "Take-Profit (2:1 R:R)": f"${take_profit:,.2f}",
+            "ATR Multiplier Used":   f"{atr_mult}x",
         }.items():
             st.markdown(
                 f'<div class="stat-row"><span class="stat-label">{label}</span>'
@@ -1491,12 +1635,12 @@ elif nav == "Stop-Loss":
         st.markdown('<div class="soft-panel">', unsafe_allow_html=True)
         st.markdown("<strong>Risk & Sizing</strong>", unsafe_allow_html=True)
         for label, value in {
-            "Investment Amount":      f"${investment:,.0f}",
-            "Max Acceptable Loss %":  f"{max_loss_pct}%",
-            "Max Loss (USD)":         f"${max_loss_usd:,.0f}",
-            "Suggested Shares":       f"{shares:,}",
-            "Position Value":         f"${position_val:,.0f}",
-            "20d Annualised Vol":     f"{vol_20*100:.1f}%",
+            "Investment Amount":     f"${investment:,.0f}",
+            "Max Acceptable Loss %": f"{max_loss_pct}%",
+            "Max Loss (USD)":        f"${max_loss_usd:,.0f}",
+            "Suggested Shares":      f"{shares:,}",
+            "Position Value":        f"${position_val:,.0f}",
+            "20d Annualised Vol":    f"{vol_20*100:.1f}%",
         }.items():
             st.markdown(
                 f'<div class="stat-row"><span class="stat-label">{label}</span>'
@@ -1505,153 +1649,210 @@ elif nav == "Stop-Loss":
         st.markdown("</div>", unsafe_allow_html=True)
 
     render_info(
-        "<strong>Important:</strong> Stop-loss levels are suggestions based on quantitative volatility analysis. "
-        "They do not guarantee against losses exceeding the stated amount, especially during gap openings, "
-        "market halts, or periods of extreme illiquidity. Always confirm stop-loss orders with your broker."
+        "<strong>Important:</strong> Stop-loss levels are suggestions based on quantitative "
+        "volatility analysis. They do not guarantee against losses exceeding the stated amount "
+        "during gap openings, market halts, or periods of extreme illiquidity."
     )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MACRO DASHBOARD
+# MACRO & NEWS
 # ══════════════════════════════════════════════════════════════════════════════
-elif nav == "Macro":
+elif nav == "Macro & News":
 
     render_hero(
-        "Module 07 — Macroeconomic Context",
-        "Macro & Commodities Dashboard",
-        "The global macroeconomic backdrop that drives metals markets. "
-        "Commodity prices, treasury yields, the VIX fear index, and the US Dollar Index "
-        "are the key macro forces that directly impact metals sector equity performance.",
+        "Global Markets & Economics",
+        "Macro & News Intelligence",
+        "The macroeconomic forces, commodity trends, and live news driving metals markets. "
+        "Understanding macro context is critical — metals stocks are among the most "
+        "macro-sensitive equities in global markets.",
     )
 
     period = st.selectbox(
         "Time Period", ["3mo", "6mo", "1y", "2y"], index=1, key="macro_period",
     )
 
-    with st.spinner("Loading macro and commodity data..."):
-        macro_df = load_macro_data(period)
+    # ── Macro Context Explanations
+    render_section(
+        "Macro & Micro Economic Drivers — What Moves Metals Stocks",
+        "A plain-language guide to the forces currently affecting metals sector equities.",
+    )
 
-    if macro_df.empty:
-        st.error("Could not load macro data. Check your internet connection.")
-        st.stop()
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        st.markdown("""
+        <div class="soft-panel">
+            <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;
+                        letter-spacing:0.08em;color:#a38b5c;margin-bottom:0.75rem;">
+                Macroeconomic Factors (Global)
+            </div>
+            <div style="font-size:0.88rem;color:#3a3530;line-height:1.8;">
+                <strong>Interest Rates (Fed Policy)</strong><br>
+                Rising rates = stronger USD = lower commodity prices (gold, copper priced in USD).
+                Rate hikes also slow economic growth, reducing industrial metal demand.
+                When the Fed cuts rates, metals typically rally.<br><br>
+                <strong>US Dollar Index (DXY)</strong><br>
+                Metals are priced in USD globally. A stronger dollar makes metals more expensive
+                for foreign buyers, reducing demand and prices. Dollar weakness is bullish for
+                all metals stocks — especially gold miners.<br><br>
+                <strong>China Economic Growth</strong><br>
+                China consumes ~50% of global copper, steel, and aluminum. Any slowdown in
+                Chinese manufacturing, construction, or infrastructure spending directly
+                pressures FCX, SCCO, AA, CLF, X, and NUE.<br><br>
+                <strong>Geopolitical Risk</strong><br>
+                Wars, sanctions, and trade disputes drive gold higher as a safe-haven asset.
+                Supply disruptions in mining regions (Peru, DRC, Chile) create price spikes
+                for copper and gold regardless of broader market conditions.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_m2:
+        st.markdown("""
+        <div class="soft-panel">
+            <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;
+                        letter-spacing:0.08em;color:#a38b5c;margin-bottom:0.75rem;">
+                Microeconomic Factors (Company & Industry Level)
+            </div>
+            <div style="font-size:0.88rem;color:#3a3530;line-height:1.8;">
+                <strong>Commodity Spot Prices</strong><br>
+                The most direct driver. Copper at $4.50/lb vs $3.50/lb can double FCX's
+                earnings. Gold miners' margins expand dramatically when gold rises above
+                their all-in sustaining costs (AISC).<br><br>
+                <strong>Energy Costs</strong><br>
+                Aluminum smelting and mining operations are energy-intensive. High electricity
+                and natural gas prices compress margins for AA, CLF, and NUE, even when
+                metal prices are rising.<br><br>
+                <strong>Earnings & Production Reports</strong><br>
+                Quarterly production guidance, reserve estimates, cost guidance, and
+                capex plans directly move individual stock prices. Earnings misses in
+                metals can cause 10–20% single-day moves.<br><br>
+                <strong>EV & Green Energy Demand</strong><br>
+                Electric vehicles require 3–4x more copper than conventional cars.
+                Solar panels need aluminum and silver. This structural demand growth
+                is a long-term bullish catalyst for FCX, SCCO, and AA.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     divider()
 
+    # ── Commodity Charts
     render_section(
         "Commodity Prices — Gold, Silver, Copper, Crude Oil & Natural Gas",
-        "Commodity prices are the primary driver of metals sector equity returns. "
-        "Gold rises during inflation, dollar weakness, and geopolitical uncertainty — "
-        "benefiting gold miners like NEM and GOLD. "
-        "Copper is the primary industrial metal — rising copper prices signal global economic "
-        "expansion and directly benefit FCX and SCCO. "
-        "Crude oil affects energy costs for mining and smelting operations across all metals companies.",
+        "Rebased to 100 at period start for easy comparison. "
+        "Rising commodity prices generally lift metals sector equities. "
+        "Divergences between commodity prices and stock prices can signal mispricing opportunities.",
     )
 
-    commodity_cols = [c for c in macro_df.columns if any(
-        x in c for x in ["Gold", "Silver", "Copper", "Crude", "Nat."])]
+    with st.spinner("Loading commodity data..."):
+        macro_df = load_macro_data(period)
 
-    if commodity_cols:
-        fig_comm = go.Figure()
-        comm_colors = ["#a38b5c", "#7d7d7d", "#d35400", "#2471a3", "#27ae60"]
-        for i, col in enumerate(commodity_cols):
-            series = macro_df[col].dropna()
-            if series.empty:
-                continue
-            rebased = series / series.iloc[0] * 100
-            fig_comm.add_trace(go.Scatter(
-                x=rebased.index, y=rebased,
-                line=dict(color=comm_colors[i % len(comm_colors)], width=2),
-                name=col,
-            ))
-        fig_comm.add_hline(y=100, line=dict(color="#6b6560", width=1, dash="dot"),
-                           annotation_text="Base (period start)",
-                           annotation_position="right",
-                           annotation_font=dict(size=10, color="#6b6560"))
-        fig_comm.update_layout(
-            paper_bgcolor="#faf6f0", plot_bgcolor="#faf6f0",
-            font=dict(family="DM Sans", color="#1a1a1a", size=12),
-            height=440, margin=dict(l=10, r=10, t=20, b=10),
-            legend=dict(bgcolor="rgba(255,255,255,0.88)",
-                        bordercolor="rgba(163,139,92,0.22)", borderwidth=1,
-                        orientation="h", yanchor="bottom", y=1.01,
-                        xanchor="left", x=0, font=dict(size=11)),
-            yaxis=dict(title="Indexed Price (Base = 100)",
-                       gridcolor="rgba(163,139,92,0.10)",
-                       tickfont=dict(size=11, color="#6b6560")),
-            xaxis=dict(gridcolor="rgba(163,139,92,0.10)",
-                       tickfont=dict(size=11, color="#6b6560")),
-            hovermode="x unified",
-            hoverlabel=dict(bgcolor="#ffffff", bordercolor="rgba(163,139,92,0.3)",
-                            font=dict(family="DM Sans", size=12, color="#1a1a1a")),
+    if not macro_df.empty:
+        commodity_cols = [c for c in macro_df.columns if any(
+            x in c for x in ["Gold", "Silver", "Copper", "Crude", "Nat."])]
+
+        if commodity_cols:
+            fig_comm = go.Figure()
+            comm_colors = ["#a38b5c", "#7d7d7d", "#d35400", "#2471a3", "#27ae60"]
+            for i, col in enumerate(commodity_cols):
+                series = macro_df[col].dropna()
+                if series.empty:
+                    continue
+                rebased = series / series.iloc[0] * 100
+                fig_comm.add_trace(go.Scatter(
+                    x=rebased.index, y=rebased,
+                    line=dict(color=comm_colors[i % len(comm_colors)], width=2),
+                    name=col,
+                ))
+            fig_comm.add_hline(y=100, line=dict(color="#6b6560", width=1, dash="dot"),
+                               annotation_text="Base (period start)",
+                               annotation_position="right",
+                               annotation_font=dict(size=10, color="#6b6560"))
+            fig_comm.update_layout(
+                paper_bgcolor="#faf6f0", plot_bgcolor="#faf6f0",
+                font=dict(family="DM Sans", color="#1a1a1a", size=12),
+                height=440, margin=dict(l=10, r=10, t=20, b=10),
+                legend=dict(bgcolor="rgba(255,255,255,0.88)",
+                            bordercolor="rgba(163,139,92,0.22)", borderwidth=1,
+                            orientation="h", yanchor="bottom", y=1.01,
+                            xanchor="left", x=0, font=dict(size=11)),
+                yaxis=dict(title="Indexed Price (Base = 100)",
+                           gridcolor="rgba(163,139,92,0.10)",
+                           tickfont=dict(size=11, color="#6b6560")),
+                xaxis=dict(gridcolor="rgba(163,139,92,0.10)",
+                           tickfont=dict(size=11, color="#6b6560")),
+                hovermode="x unified",
+                hoverlabel=dict(bgcolor="#ffffff", bordercolor="rgba(163,139,92,0.3)",
+                                font=dict(family="DM Sans", size=12, color="#1a1a1a")),
+            )
+            st.plotly_chart(fig_comm, use_container_width=True)
+
+        divider()
+
+        render_section(
+            "Market Risk Indicators — VIX, S&P 500, 10Y Treasury & US Dollar",
+            "VIX above 30 = high market fear → typically bullish for gold. "
+            "Rising 10Y Treasury yields → bearish for gold (higher opportunity cost of holding non-yielding assets). "
+            "Rising US Dollar → bearish for commodity prices. "
+            "S&P 500 weakness → mixed for metals (industrial metals fall, gold rises).",
         )
-        st.plotly_chart(fig_comm, use_container_width=True)
+
+        macro_cols = [c for c in macro_df.columns if any(
+            x in c for x in ["S&P", "VIX", "Treasury", "Dollar"])]
+
+        if macro_cols:
+            fig_macro = make_subplots(
+                rows=len(macro_cols), cols=1,
+                shared_xaxes=True,
+                vertical_spacing=0.06,
+                subplot_titles=macro_cols,
+            )
+            macro_colors = ["#2471a3", "#e74c3c", "#a38b5c", "#27ae60"]
+            for i, col in enumerate(macro_cols):
+                series = macro_df[col].dropna()
+                if series.empty:
+                    continue
+                try:
+                    r = int(macro_colors[i % len(macro_colors)][1:3], 16)
+                    g = int(macro_colors[i % len(macro_colors)][3:5], 16)
+                    b = int(macro_colors[i % len(macro_colors)][5:7], 16)
+                    fill_color = f"rgba({r},{g},{b},0.07)"
+                except Exception:
+                    fill_color = "rgba(163,139,92,0.07)"
+                fig_macro.add_trace(go.Scatter(
+                    x=series.index, y=series,
+                    line=dict(color=macro_colors[i % len(macro_colors)], width=2),
+                    fill="tozeroy", fillcolor=fill_color,
+                    name=col,
+                ), row=i+1, col=1)
+                fig_macro.update_yaxes(
+                    gridcolor="rgba(163,139,92,0.10)",
+                    tickfont=dict(size=10, color="#6b6560"),
+                    row=i+1, col=1,
+                )
+                fig_macro.update_xaxes(
+                    gridcolor="rgba(163,139,92,0.10)",
+                    tickfont=dict(size=10, color="#6b6560"),
+                    row=i+1, col=1,
+                )
+            fig_macro.update_layout(
+                paper_bgcolor="#faf6f0", plot_bgcolor="#faf6f0",
+                font=dict(family="DM Sans", color="#1a1a1a", size=12),
+                height=max(120 * len(macro_cols) + 60, 300),
+                margin=dict(l=10, r=10, t=30, b=10),
+                showlegend=False,
+                hovermode="x unified",
+                hoverlabel=dict(bgcolor="#ffffff", bordercolor="rgba(163,139,92,0.3)",
+                                font=dict(family="DM Sans", size=12, color="#1a1a1a")),
+            )
+            st.plotly_chart(fig_macro, use_container_width=True)
 
     divider()
 
     render_section(
-        "Market Risk Indicators — VIX, S&P 500 & 10-Year Treasury",
-        "The VIX (CBOE Volatility Index) measures expected market volatility — "
-        "often called the 'fear index'. VIX above 30 signals high market fear and typically "
-        "correlates with rising gold prices as investors seek safe-haven assets. "
-        "The S&P 500 reflects broad equity market sentiment. "
-        "The 10-Year Treasury yield affects metals through its impact on the US Dollar and "
-        "real interest rates — rising yields typically pressure gold prices.",
-    )
-
-    macro_cols = [c for c in macro_df.columns if any(
-        x in c for x in ["S&P", "VIX", "Treasury", "Dollar"])]
-
-    if macro_cols:
-        fig_macro = make_subplots(
-            rows=len(macro_cols), cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.06,
-            subplot_titles=macro_cols,
-        )
-        macro_colors = ["#2471a3", "#e74c3c", "#a38b5c", "#27ae60"]
-        for i, col in enumerate(macro_cols):
-            series = macro_df[col].dropna()
-            if series.empty:
-                continue
-            fig_macro.add_trace(go.Scatter(
-                x=series.index, y=series,
-                line=dict(color=macro_colors[i % len(macro_colors)], width=2),
-                fill="tozeroy",
-                fillcolor=f"rgba({int(macro_colors[i % len(macro_colors)][1:3], 16)},"
-                          f"{int(macro_colors[i % len(macro_colors)][3:5], 16)},"
-                          f"{int(macro_colors[i % len(macro_colors)][5:7], 16)},0.07)",
-                name=col,
-            ), row=i+1, col=1)
-            fig_macro.update_yaxes(
-                gridcolor="rgba(163,139,92,0.10)",
-                tickfont=dict(size=10, color="#6b6560"),
-                row=i+1, col=1,
-            )
-            fig_macro.update_xaxes(
-                gridcolor="rgba(163,139,92,0.10)",
-                tickfont=dict(size=10, color="#6b6560"),
-                row=i+1, col=1,
-            )
-
-        fig_macro.update_layout(
-            paper_bgcolor="#faf6f0", plot_bgcolor="#faf6f0",
-            font=dict(family="DM Sans", color="#1a1a1a", size=12),
-            height=120 * max(len(macro_cols), 2) + 60,
-            margin=dict(l=10, r=10, t=30, b=10),
-            showlegend=False,
-            hovermode="x unified",
-            hoverlabel=dict(bgcolor="#ffffff", bordercolor="rgba(163,139,92,0.3)",
-                            font=dict(family="DM Sans", size=12, color="#1a1a1a")),
-        )
-        st.plotly_chart(fig_macro, use_container_width=True)
-
-    divider()
-
-    render_section(
-        "Metals Sector — Relative Performance Comparison",
-        "All 8 metals stocks in the platform universe rebased to 100 at the start of the period. "
-        "Lines above 100 indicate positive absolute returns since period start. "
-        "Use this to identify sector leaders and laggards across the metals universe.",
+        "Metals Sector — Relative Performance",
+        "All 8 metals stocks rebased to 100. Identify sector leaders and laggards at a glance.",
     )
 
     with st.spinner("Loading sector data..."):
@@ -1687,12 +1888,46 @@ elif nav == "Macro":
         )
         st.plotly_chart(fig_sec, use_container_width=True)
 
+    divider()
+
+    # ── Live News Feed
+    render_section(
+        "Live Metals Market News",
+        "Real-time headlines from across the metals sector. "
+        "News is one of the fastest-moving inputs to metals stock prices — "
+        "supply disruptions, Fed announcements, China data, and geopolitical events "
+        "can move metals stocks 5–15% in a single session.",
+    )
+
+    with st.spinner("Loading latest metals news..."):
+        all_news = get_metals_news()
+
+    if all_news:
+        render_info(
+            "<strong>How to read news for metals stocks:</strong> "
+            "Look for keywords like <em>copper supply disruption</em> (bullish FCX/SCCO), "
+            "<em>Fed rate cut</em> (bullish gold/NEM/GOLD), "
+            "<em>China stimulus</em> (bullish copper/steel), "
+            "<em>strong dollar</em> (bearish all metals), "
+            "<em>tariffs on steel</em> (bullish CLF/NUE/X), "
+            "<em>inflation data</em> (bullish gold if high), "
+            "<em>recession fears</em> (bearish copper/steel, bullish gold)."
+        )
+        nc1, nc2 = st.columns(2)
+        for i, item in enumerate(all_news):
+            with (nc1 if i % 2 == 0 else nc2):
+                render_news_card(item)
+    else:
+        st.info("News feed temporarily unavailable. Check your internet connection.")
+
+    divider()
+
     render_info(
-        "<strong>Macro Drivers for Metals:</strong> "
-        "Rising inflation → bullish for gold and silver. "
-        "Falling US Dollar → bullish for all commodities. "
-        "Rising industrial demand (China, EVs) → bullish for copper and aluminum. "
-        "Rising interest rates → bearish for gold (opportunity cost). "
-        "Geopolitical risk → bullish for gold as safe haven. "
-        "Construction slowdown → bearish for steel (CLF, NUE, X)."
+        "<strong>Key Macro Signals to Watch:</strong> "
+        "Rising gold = inflation fears or geopolitical risk increasing. "
+        "Rising copper = global growth expectations improving. "
+        "Falling steel prices = construction/manufacturing slowdown. "
+        "VIX above 25 = elevated market fear, consider reducing metals exposure. "
+        "Dollar weakening = broad commodity tailwind. "
+        "China PMI above 50 = industrial metals demand expanding."
     )
